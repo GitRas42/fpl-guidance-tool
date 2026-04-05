@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: fpl-guidance-tool
+    runtime: python
+    buildCommand: |
+      pip install -r requirements.txt
+      cd frontend && npm install && npm run build && cd ..
+      rm -rf static
+      cp -r frontend/build static
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 30 --access-logfile -
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: NODE_VERSION
+        value: 18.20.0

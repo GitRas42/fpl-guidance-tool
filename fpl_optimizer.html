@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FPL AI Optimizer</title>
+<style>
+/* === Reset & Base === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #273449;
+  --border: #334155; --text: #f1f5f9; --text-dim: #94a3b8;
+  --accent: #f59e0b; --accent-h: #d97706;
+  --green: #22c55e; --red: #ef4444; --blue: #3b82f6;
+}
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; }
+.container { max-width: 1100px; margin: 0 auto; padding: 0 1rem; }
+
+/* === Header === */
+.header { padding: 1.25rem 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+.logo { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+.header-info { color: var(--text-dim); font-size: 0.85rem; }
+
+/* === Tabs === */
+.tabs { display: flex; gap: 0.25rem; margin-top: 1.25rem; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.tab { background: none; border: none; color: var(--text-dim); padding: 0.7rem 1.15rem; cursor: pointer; font-size: 0.9rem; font-weight: 500; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* === Content === */
+.content { padding: 1.25rem 0 2rem; }
+.panel { display: none; animation: fadeIn 0.3s ease; }
+.panel.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* === Stats === */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+.stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.6rem; padding: 0.9rem; text-align: center; }
+.stat-val { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+.stat-lbl { font-size: 0.75rem; color: var(--text-dim); margin-top: 0.15rem; }
+
+/* === Cards === */
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.6rem; padding: 1rem; margin-bottom: 0.6rem; transition: background 0.2s; }
+.card:hover { background: var(--bg-hover); }
+.pos-group { margin-bottom: 1.25rem; }
+.pos-title { font-size: 1rem; font-weight: 600; color: var(--accent); margin-bottom: 0.6rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
+.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.6rem; }
+.pcard { background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.6rem; padding: 0.85rem; display: flex; justify-content: space-between; align-items: center; transition: all 0.15s; }
+.pcard:hover { background: var(--bg-hover); border-color: var(--accent); }
+.pname { font-weight: 600; }
+.pteam { color: var(--text-dim); font-size: 0.78rem; }
+.pprice { color: var(--accent); font-weight: 600; }
+.ppts { color: var(--text-dim); font-size: 0.8rem; }
+.cbadge { background: var(--accent); color: #000; font-size: 0.65rem; font-weight: 700; padding: 0.1rem 0.35rem; border-radius: 0.2rem; margin-left: 0.4rem; }
+
+/* === Transfer === */
+.tcard { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.tarrow { color: var(--accent); font-size: 1.4rem; font-weight: 700; }
+.tdelta { font-weight: 700; font-size: 1rem; }
+.pos-green { color: var(--green); }
+.pos-red { color: var(--red); }
+
+/* === Captain === */
+.ccard { display: flex; align-items: center; gap: 0.85rem; }
+.crank { font-size: 1.35rem; font-weight: 700; color: var(--accent); min-width: 1.75rem; text-align: center; }
+.fbadge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 0.3rem; font-size: 0.78rem; font-weight: 600; }
+.d1, .d2 { background: #166534; color: #bbf7d0; }
+.d3 { background: #854d0e; color: #fef08a; }
+.d4, .d5 { background: #991b1b; color: #fecaca; }
+
+/* === Rotation === */
+.gw-sec { margin-bottom: 1.5rem; }
+.gw-hdr { font-size: 1rem; font-weight: 600; color: var(--accent); margin-bottom: 0.5rem; display: flex; justify-content: space-between; }
+.pbadge { display: inline-flex; align-items: center; gap: 0.35rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.3rem 0.6rem; margin: 0.2rem; font-size: 0.8rem; }
+.pdot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+/* === Settings === */
+.sgroup { margin-bottom: 1.25rem; }
+.slbl { display: block; font-weight: 600; margin-bottom: 0.4rem; }
+.sslider { width: 100%; accent-color: var(--accent); }
+.sselect { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 0.45rem; border-radius: 0.4rem; width: 100%; font-size: 0.85rem; }
+.algo-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.6rem; padding: 1.1rem; margin-top: 1.25rem; }
+.algo-box h3 { color: var(--accent); margin-bottom: 0.6rem; }
+.algo-box code { background: var(--bg); padding: 0.1rem 0.35rem; border-radius: 0.2rem; font-size: 0.82rem; }
+
+/* === Footer === */
+.footer { text-align: center; padding: 1.25rem 0; color: var(--text-dim); font-size: 0.8rem; border-top: 1px solid var(--border); }
+
+/* === Responsive === */
+@media (max-width: 640px) {
+  .header { flex-direction: column; align-items: flex-start; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .pgrid { grid-template-columns: 1fr; }
+  .tcard { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">&#9917; FPL AI Optimizer</div>
+    <div class="header-info">Demo Mode &mdash; Pre-loaded sample data</div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="squad">Squad</button>
+    <button class="tab" data-tab="transfers">Transfers</button>
+    <button class="tab" data-tab="captain">Captain</button>
+    <button class="tab" data-tab="rotation">Rotation</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+    <div id="panel-squad" class="panel active"></div>
+    <div id="panel-transfers" class="panel"></div>
+    <div id="panel-captain" class="panel"></div>
+    <div id="panel-rotation" class="panel"></div>
+    <div id="panel-settings" class="panel"></div>
+  </div>
+
+  <div class="footer">FPL AI Optimizer &mdash; Standalone Demo (no server required)</div>
+</div>
+
+<script>
+// ============================================================
+// DEMO DATA
+// ============================================================
+const TEAMS = {
+  1:{name:"Arsenal",short:"ARS"},2:{name:"Aston Villa",short:"AVL"},3:{name:"Bournemouth",short:"BOU"},
+  4:{name:"Brentford",short:"BRE"},5:{name:"Brighton",short:"BHA"},6:{name:"Chelsea",short:"CHE"},
+  7:{name:"Crystal Palace",short:"CRY"},8:{name:"Everton",short:"EVE"},9:{name:"Fulham",short:"FUL"},
+  10:{name:"Ipswich",short:"IPS"},11:{name:"Leicester",short:"LEI"},12:{name:"Liverpool",short:"LIV"},
+  13:{name:"Man City",short:"MCI"},14:{name:"Man Utd",short:"MUN"},15:{name:"Newcastle",short:"NEW"},
+  16:{name:"Nottm Forest",short:"NFO"},17:{name:"Southampton",short:"SOU"},18:{name:"Spurs",short:"TOT"},
+  19:{name:"West Ham",short:"WHU"},20:{name:"Wolves",short:"WOL"}
+};
+
+const SQUAD = [
+  {id:1,name:"Raya",team:1,pos:"GK",price:5.5,form:5.2,pts:142,own:28.3,status:"a"},
+  {id:2,name:"Flekken",team:4,pos:"GK",price:4.5,form:3.8,pts:98,own:8.1,status:"a"},
+  {id:3,name:"Alexander-Arnold",team:12,pos:"DEF",price:7.2,form:6.1,pts:156,own:32.5,status:"a"},
+  {id:4,name:"Saliba",team:1,pos:"DEF",price:5.8,form:5.5,pts:138,own:25.7,status:"a"},
+  {id:5,name:"Gabriel",team:1,pos:"DEF",price:5.5,form:5.0,pts:130,own:22.1,status:"a"},
+  {id:6,name:"Estupinan",team:5,pos:"DEF",price:5.0,form:3.2,pts:72,own:5.3,status:"d"},
+  {id:7,name:"Mitchell",team:7,pos:"DEF",price:4.5,form:3.5,pts:85,own:9.8,status:"a"},
+  {id:8,name:"Salah",team:12,pos:"MID",price:13.5,form:9.8,pts:248,own:65.2,status:"a"},
+  {id:9,name:"Saka",team:1,pos:"MID",price:10.2,form:7.5,pts:195,own:42.8,status:"a"},
+  {id:10,name:"Palmer",team:6,pos:"MID",price:10.8,form:8.2,pts:212,own:55.1,status:"a"},
+  {id:11,name:"Bruno Fernandes",team:14,pos:"MID",price:8.5,form:5.1,pts:135,own:18.3,status:"a"},
+  {id:12,name:"Mbeumo",team:4,pos:"MID",price:7.5,form:6.0,pts:150,own:25.6,status:"a"},
+  {id:13,name:"Haaland",team:13,pos:"FWD",price:14.5,form:8.5,pts:220,own:72.1,status:"a"},
+  {id:14,name:"Watkins",team:2,pos:"FWD",price:8.8,form:5.8,pts:148,own:20.5,status:"a"},
+  {id:15,name:"Isak",team:15,pos:"FWD",price:8.5,form:6.5,pts:162,own:30.2,status:"a"},
+];
+
+// Replacement pool
+const REPLACEMENTS = [
+  {id:101,name:"Pickford",team:8,pos:"GK",price:4.8,form:4.5,pts:115,own:12.4,status:"a"},
+  {id:102,name:"Van Dijk",team:12,pos:"DEF",price:6.2,form:5.8,pts:145,own:28.9,status:"a"},
+  {id:103,name:"Pedro Porro",team:18,pos:"DEF",price:5.7,form:5.3,pts:128,own:18.2,status:"a"},
+  {id:104,name:"Diaz",team:12,pos:"MID",price:8.0,form:6.8,pts:168,own:22.1,status:"a"},
+  {id:105,name:"Son",team:18,pos:"MID",price:9.8,form:7.0,pts:175,own:19.5,status:"a"},
+  {id:106,name:"Cunha",team:20,pos:"FWD",price:7.2,form:6.2,pts:155,own:15.8,status:"a"},
+  {id:107,name:"Solanke",team:18,pos:"FWD",price:7.5,form:5.5,pts:138,own:12.3,status:"a"},
+  {id:108,name:"Gordon",team:15,pos:"MID",price:7.8,form:6.3,pts:158,own:20.8,status:"a"},
+  {id:109,name:"Ait-Nouri",team:20,pos:"DEF",price:5.0,form:4.8,pts:118,own:14.2,status:"a"},
+  {id:110,name:"Martinez",team:2,pos:"GK",price:5.0,form:4.8,pts:120,own:18.5,status:"a"},
+];
+
+const CURRENT_GW = 32;
+const BANK = 1.5;
+const POINTS = 1856;
+const RANK = 245000;
+
+// Fixture difficulty data (simplified)
+const GW_FIXTURES = {};
+for (let gw = CURRENT_GW+1; gw <= CURRENT_GW+5; gw++) {
+  GW_FIXTURES[gw] = [];
+  for (let t = 1; t <= 20; t++) {
+    const opp = ((t + gw) % 20) + 1;
+    const diff = Math.min(5, Math.max(1, Math.floor(Math.random()*3) + 2));
+    const isHome = (t + gw) % 2 === 0;
+    GW_FIXTURES[gw].push({team: t, opponent: opp, difficulty: diff, is_home: isHome});
+  }
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+let settings = { max_transfers: 2, lookahead_gw: 5, criteria: "projected_points" };
+
+// ============================================================
+// ALGORITHM
+// ============================================================
+function calcProjected(player, numGw) {
+  let form = player.form || 4.5;
+  if (player.status === "u") form *= 0.5;
+  else if (player.status === "d") form *= 0.7;
+  else if (player.status === "i" || player.status === "s") form = 0;
+
+  let adjSum = 0, count = 0;
+  for (let gw = CURRENT_GW+1; gw <= CURRENT_GW+numGw; gw++) {
+    const fix = (GW_FIXTURES[gw]||[]).find(f => f.team === player.team);
+    if (fix) { adjSum += (3 - fix.difficulty) * 0.1; count++; }
+  }
+  const avgAdj = count > 0 ? adjSum / count : 0;
+  const perGame = (form * 0.6) + (form * (1 + avgAdj) * 0.4);
+  return Math.round(perGame * numGw * 100) / 100;
+}
+
+function getFixtureForGw(teamId, gw) {
+  return (GW_FIXTURES[gw]||[]).find(f => f.team === teamId) || null;
+}
+
+function getTransferRecs() {
+  const numGw = settings.lookahead_gw;
+  const squadWithProj = SQUAD.map(p => ({...p, projected: calcProjected(p, numGw)}));
+  const currentRating = squadWithProj.reduce((s,p) => s + p.projected, 0);
+
+  // Sort by projected ascending (weakest first)
+  const sellable = [...squadWithProj].sort((a,b) => a.projected - b.projected);
+
+  const recs = [];
+  const usedIds = new Set(SQUAD.map(p => p.id));
+  let bank = BANK;
+
+  for (let i = 0; i < Math.min(settings.max_transfers, sellable.length); i++) {
+    const out = sellable[i];
+    const budget = bank + out.price;
+    const candidates = REPLACEMENTS
+      .filter(r => r.pos === out.pos && r.price <= budget && !usedIds.has(r.id))
+      .map(r => ({...r, projected: calcProjected(r, numGw)}))
+      .sort((a,b) => b.projected - a.projected);
+
+    if (candidates.length === 0) continue;
+    const inp = candidates[0];
+    const delta = inp.projected - out.projected;
+    const penalty = i >= 2 ? -4 : 0;
+    const net = delta + penalty;
+    if (net <= 0) continue;
+
+    recs.push({ out, in: inp, delta: Math.round(delta*10)/10, net: Math.round(net*10)/10, priceDelta: Math.round((inp.price - out.price)*10)/10, penalty });
+    usedIds.add(inp.id);
+    bank = budget - inp.price;
+  }
+
+  const optRating = currentRating + recs.reduce((s,r) => s + r.net, 0);
+  return { currentRating: Math.round(currentRating*10)/10, optRating: Math.round(optRating*10)/10, recs };
+}
+
+function getCaptainRecs() {
+  return SQUAD
+    .map(p => {
+      const proj = calcProjected(p, 1);
+      const fix = getFixtureForGw(p.team, CURRENT_GW+1);
+      return {...p, projected: Math.round(proj*10)/10, fixture: fix};
+    })
+    .sort((a,b) => b.projected - a.projected)
+    .slice(0, 5)
+    .map((p,i) => ({...p, rank: i+1}));
+}
+
+function getRotation() {
+  const numGw = settings.lookahead_gw;
+  const strategy = [];
+  let total = 0;
+  const formation = {GK:1, DEF:4, MID:5, FWD:1};
+
+  for (let gw = CURRENT_GW+1; gw <= CURRENT_GW+numGw; gw++) {
+    const players = SQUAD.map(p => {
+      const fix = getFixtureForGw(p.team, gw);
+      const proj = calcProjected(p, 1);
+      return {...p, projected: Math.round(proj*10)/10, fixture: fix};
+    });
+
+    // Select best XI
+    const byPos = {GK:[], DEF:[], MID:[], FWD:[]};
+    players.forEach(p => byPos[p.pos].push(p));
+    Object.values(byPos).forEach(arr => arr.sort((a,b) => b.projected - a.projected));
+
+    const xi = [];
+    for (const [pos, count] of Object.entries(formation)) {
+      xi.push(...(byPos[pos]||[]).slice(0, count));
+    }
+    const xiIds = new Set(xi.map(p => p.id));
+    const bench = players.filter(p => !xiIds.has(p.id));
+
+    // Captain
+    const captain = xi.reduce((best, p) => p.projected > best.projected ? p : best, xi[0]);
+    if (captain) captain.isCaptain = true;
+
+    const gwTotal = xi.reduce((s,p) => s + p.projected, 0) + (captain ? captain.projected : 0);
+    strategy.push({gw, xi, bench, captain, total: Math.round(gwTotal*10)/10});
+    total += gwTotal;
+  }
+  return {strategy, total: Math.round(total*10)/10};
+}
+
+// ============================================================
+// RENDERING
+// ============================================================
+function renderSquad() {
+  const numGw = settings.lookahead_gw;
+  const groups = {GK:[], DEF:[], MID:[], FWD:[]};
+  SQUAD.forEach(p => {
+    groups[p.pos].push({...p, projected: calcProjected(p, numGw)});
+  });
+  const posNames = {GK:"Goalkeepers", DEF:"Defenders", MID:"Midfielders", FWD:"Forwards"};
+
+  let html = `
+    <div class="stats">
+      <div class="stat"><div class="stat-val">GW ${CURRENT_GW}</div><div class="stat-lbl">Current Gameweek</div></div>
+      <div class="stat"><div class="stat-val">${POINTS.toLocaleString()}</div><div class="stat-lbl">Overall Points</div></div>
+      <div class="stat"><div class="stat-val">${RANK.toLocaleString()}</div><div class="stat-lbl">Global Rank</div></div>
+      <div class="stat"><div class="stat-val">&pound;${BANK.toFixed(1)}m</div><div class="stat-lbl">In the Bank</div></div>
+    </div>`;
+
+  for (const pos of ["GK","DEF","MID","FWD"]) {
+    html += `<div class="pos-group"><div class="pos-title">${posNames[pos]}</div><div class="pgrid">`;
+    for (const p of groups[pos]) {
+      const statusHtml = p.status !== "a" ? `<span style="background:#854d0e;color:#fef08a;font-size:0.65rem;font-weight:600;padding:0.1rem 0.3rem;border-radius:0.2rem">${p.status==="d"?"Doubtful":"Unavailable"}</span>` : "";
+      html += `<div class="pcard"><div><div class="pname">${p.name}</div><div class="pteam">${TEAMS[p.team].short} &middot; ${p.pos}</div><div class="ppts">Projected: ${p.projected.toFixed(1)} pts</div></div><div style="text-align:right"><div class="pprice">&pound;${p.price.toFixed(1)}m</div><div class="ppts">${p.own}% owned</div>${statusHtml}</div></div>`;
+    }
+    html += `</div></div>`;
+  }
+  document.getElementById("panel-squad").innerHTML = html;
+}
+
+function renderTransfers() {
+  const {currentRating, optRating, recs} = getTransferRecs();
+  const imp = Math.round((optRating - currentRating)*10)/10;
+  const impColor = imp > 0 ? "var(--green)" : imp < 0 ? "var(--red)" : "var(--text-dim)";
+
+  let html = `
+    <div class="stats">
+      <div class="stat"><div class="stat-val">${currentRating.toFixed(1)}</div><div class="stat-lbl">Current Rating</div></div>
+      <div class="stat"><div class="stat-val">${optRating.toFixed(1)}</div><div class="stat-lbl">Optimized Rating</div></div>
+      <div class="stat"><div class="stat-val" style="color:${impColor}">${imp>0?"+":""}${imp.toFixed(1)}</div><div class="stat-lbl">Improvement</div></div>
+    </div>`;
+
+  if (recs.length === 0) {
+    html += `<div style="text-align:center;color:var(--text-dim);padding:2rem">No beneficial transfers found. Your squad looks strong!</div>`;
+  }
+  for (const r of recs) {
+    html += `<div class="card"><div class="tcard">
+      <div style="flex:1"><div style="color:var(--red);font-size:0.7rem;font-weight:600;margin-bottom:0.2rem">OUT</div><div class="pname">${r.out.name}</div><div class="pteam">${TEAMS[r.out.team].short} &middot; ${r.out.pos}</div><div class="ppts">&pound;${r.out.price.toFixed(1)}m &middot; ${r.out.projected.toFixed(1)} pts</div></div>
+      <div class="tarrow">&rarr;</div>
+      <div style="flex:1"><div style="color:var(--green);font-size:0.7rem;font-weight:600;margin-bottom:0.2rem">IN</div><div class="pname">${r.in.name}</div><div class="pteam">${TEAMS[r.in.team].short} &middot; ${r.in.pos}</div><div class="ppts">&pound;${r.in.price.toFixed(1)}m &middot; ${r.in.projected.toFixed(1)} pts &middot; ${r.in.own}% owned</div></div>
+      <div style="text-align:right;min-width:70px"><div class="tdelta ${r.net>0?"pos-green":"pos-red"}">${r.net>0?"+":""}${r.net.toFixed(1)} pts</div><div class="ppts">${r.priceDelta>0?"+":""}£${r.priceDelta.toFixed(1)}m</div>${r.penalty<0?`<div style="color:var(--red);font-size:0.7rem">${r.penalty} pt hit</div>`:""}</div>
+    </div></div>`;
+  }
+  document.getElementById("panel-transfers").innerHTML = html;
+}
+
+function renderCaptain() {
+  const caps = getCaptainRecs();
+  let html = `<h2 style="font-size:1.15rem;font-weight:600;margin-bottom:0.85rem">Captain Picks for GW ${CURRENT_GW+1}</h2>`;
+  for (const c of caps) {
+    const fixHtml = c.fixture ? `<div style="text-align:center"><div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:0.15rem">${c.fixture.is_home?"HOME":"AWAY"}</div><span class="fbadge d${c.fixture.difficulty}">vs ${TEAMS[c.fixture.opponent]?.short||"???"}</span></div>` : "";
+    html += `<div class="card ccard">
+      <div class="crank">#${c.rank}</div>
+      <div style="flex:1"><div class="pname">${c.name}</div><div class="pteam">${TEAMS[c.team].short} &middot; ${c.pos}</div></div>
+      ${fixHtml}
+      <div style="text-align:right;min-width:70px"><div style="color:var(--accent);font-weight:700;font-size:1.05rem">${c.projected} pts</div><div class="ppts">${c.own}% owned</div></div>
+    </div>`;
+  }
+  document.getElementById("panel-captain").innerHTML = html;
+}
+
+function renderRotation() {
+  const {strategy, total} = getRotation();
+  const posColors = {GK:"var(--accent)", DEF:"var(--green)", MID:"var(--blue)", FWD:"var(--red)"};
+
+  let html = `
+    <div class="stats" style="margin-bottom:1.5rem">
+      <div class="stat"><div class="stat-val">${strategy.length}</div><div class="stat-lbl">Gameweeks Planned</div></div>
+      <div class="stat"><div class="stat-val">${total}</div><div class="stat-lbl">Total Projected Points</div></div>
+    </div>`;
+
+  for (const gw of strategy) {
+    html += `<div class="gw-sec"><div class="gw-hdr"><span>Gameweek ${gw.gw}</span><span style="font-size:0.85rem;color:var(--text-dim)">${gw.total} pts</span></div>`;
+    html += `<div class="card" style="margin-bottom:0.4rem"><div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.4rem;font-weight:600">STARTING XI</div><div>`;
+    for (const p of gw.xi) {
+      const capBadge = p.isCaptain ? `<span class="cbadge">C</span>` : "";
+      const border = p.isCaptain ? "border-color:var(--accent);border-width:2px" : "";
+      html += `<span class="pbadge" style="${border}"><span class="pdot" style="background:${posColors[p.pos]}"></span>${p.name}${capBadge}<span style="color:var(--text-dim);font-size:0.7rem">${p.projected}</span></span>`;
+    }
+    html += `</div></div>`;
+    html += `<div class="card" style="opacity:0.7"><div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.4rem;font-weight:600">BENCH</div><div>`;
+    for (const p of gw.bench) {
+      html += `<span class="pbadge"><span class="pdot" style="background:${posColors[p.pos]}"></span>${p.name}<span style="color:var(--text-dim);font-size:0.7rem">${p.projected}</span></span>`;
+    }
+    html += `</div></div></div>`;
+  }
+  document.getElementById("panel-rotation").innerHTML = html;
+}
+
+function renderSettings() {
+  document.getElementById("panel-settings").innerHTML = `
+    <h2 style="font-size:1.15rem;font-weight:600;margin-bottom:1.25rem">Settings</h2>
+    <div class="sgroup">
+      <label class="slbl">Max Transfers: <span id="mt-val">${settings.max_transfers}</span></label>
+      <input type="range" min="1" max="5" step="1" value="${settings.max_transfers}" class="sslider" id="mt-slider">
+      <div style="display:flex;justify-content:space-between;color:var(--text-dim);font-size:0.7rem"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div>
+    </div>
+    <div class="sgroup">
+      <label class="slbl">Lookahead Period: <span id="la-val">${settings.lookahead_gw}</span> gameweeks</label>
+      <input type="range" min="1" max="10" step="1" value="${settings.lookahead_gw}" class="sslider" id="la-slider">
+      <div style="display:flex;justify-content:space-between;color:var(--text-dim);font-size:0.7rem">${[...Array(10)].map((_,i)=>`<span>${i+1}</span>`).join("")}</div>
+    </div>
+    <div class="sgroup">
+      <label class="slbl">Optimization Criteria</label>
+      <select class="sselect" id="crit-select">
+        <option value="projected_points" ${settings.criteria==="projected_points"?"selected":""}>Projected Points</option>
+        <option value="form" ${settings.criteria==="form"?"selected":""}>Recent Form</option>
+        <option value="fixture_difficulty" ${settings.criteria==="fixture_difficulty"?"selected":""}>Fixture Difficulty</option>
+      </select>
+    </div>
+    <div class="algo-box">
+      <h3>How the Algorithm Works</h3>
+      <p style="color:var(--text-dim);margin-bottom:0.6rem">The recommendation engine uses a weighted scoring model:</p>
+      <p style="margin-bottom:0.4rem"><code>projected_points = (form &times; 0.6) + (fixture_adj &times; 0.4)</code></p>
+      <ul style="color:var(--text-dim);font-size:0.85rem;padding-left:1.1rem;line-height:1.8">
+        <li><strong style="color:var(--text)">Form (60%)</strong> &mdash; Points per game average</li>
+        <li><strong style="color:var(--text)">Fixture Difficulty (40%)</strong> &mdash; Scaled by opponent difficulty (1-5)</li>
+        <li><strong style="color:var(--text)">Status</strong> &mdash; Unavailable &times;0.5, doubtful &times;0.7</li>
+        <li><strong style="color:var(--text)">Transfers</strong> &mdash; -4 pt penalty beyond 2 free transfers</li>
+      </ul>
+    </div>`;
+
+  // Bind events
+  document.getElementById("mt-slider").addEventListener("input", e => {
+    settings.max_transfers = parseInt(e.target.value);
+    document.getElementById("mt-val").textContent = settings.max_transfers;
+    renderAll();
+  });
+  document.getElementById("la-slider").addEventListener("input", e => {
+    settings.lookahead_gw = parseInt(e.target.value);
+    document.getElementById("la-val").textContent = settings.lookahead_gw;
+    renderAll();
+  });
+  document.getElementById("crit-select").addEventListener("change", e => {
+    settings.criteria = e.target.value;
+  });
+}
+
+function renderAll() {
+  renderSquad();
+  renderTransfers();
+  renderCaptain();
+  renderRotation();
+}
+
+// ============================================================
+// TAB SWITCHING
+// ============================================================
+document.getElementById("tabs").addEventListener("click", e => {
+  if (!e.target.classList.contains("tab")) return;
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  e.target.classList.add("active");
+  const panel = document.getElementById("panel-" + e.target.dataset.tab);
+  if (panel) panel.classList.add("active");
+});
+
+// ============================================================
+// INIT
+// ============================================================
+renderAll();
+renderSettings();
+</script>
+</body>
+</html>
