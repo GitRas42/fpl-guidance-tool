@@ -239,6 +239,71 @@ def fetch_user_transfers(team_id):
     return data
 
 
+def fetch_league_standings(league_id, page=1):
+    """
+    Fetch classic league standings.
+
+    Args:
+        league_id: FPL league ID
+        page: page number (50 entries per page)
+
+    Returns:
+        dict with league info and standings
+    """
+    cache_key = f"league_standings_{league_id}_p{page}"
+    cached = _get_cached(cache_key)
+    if cached:
+        return cached
+
+    data = _fetch_with_retry(f"{BASE_URL}/leagues-classic/{league_id}/standings/?page_standings={page}")
+    _set_cached(cache_key, data)
+    return data
+
+
+def fetch_rival_squad(team_id, gw):
+    """
+    Fetch a rival's squad picks for a specific gameweek.
+
+    Args:
+        team_id: rival's FPL team ID
+        gw: gameweek number
+
+    Returns:
+        dict with picks, entry_history, etc.
+    """
+    cache_key = f"rival_squad_{team_id}_{gw}"
+    cached = _get_cached(cache_key)
+    if cached:
+        return cached
+
+    data = _fetch_with_retry(f"{BASE_URL}/entry/{team_id}/event/{gw}/picks/")
+    _set_cached(cache_key, data)
+    return data
+
+
+def fetch_user_history(team_id):
+    """
+    Fetch user's season history including chip usage.
+
+    Args:
+        team_id: FPL team ID
+
+    Returns:
+        dict with:
+            - current: list of GW history entries
+            - past: list of past season summaries
+            - chips: list of used chips [{name, event}]
+    """
+    cache_key = f"user_history_{team_id}"
+    cached = _get_cached(cache_key)
+    if cached:
+        return cached
+
+    data = _fetch_with_retry(f"{BASE_URL}/entry/{team_id}/history/")
+    _set_cached(cache_key, data)
+    return data
+
+
 def load_all_data(team_id):
     """
     Orchestrate all API calls and return combined data.
@@ -301,12 +366,18 @@ def load_all_data(team_id):
     except Exception:
         transfers = []
 
+    try:
+        history = fetch_user_history(team_id)
+    except Exception:
+        history = {"current": [], "past": [], "chips": []}
+
     return {
         "bootstrap": bootstrap,
         "fixtures": fixtures,
         "user_info": user_info,
         "squad": squad,
         "transfers": transfers,
+        "history": history,
         "current_gw": current_gw,
     }
 

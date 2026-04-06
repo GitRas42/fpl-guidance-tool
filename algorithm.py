@@ -349,9 +349,14 @@ def get_transfer_recommendations(data, exclude_player_ids=None, max_transfers=2,
     # Rank all non-squad players
     all_ranked = rank_player_scores(data, exclude_player_ids=squad_ids, num_gw=num_gw)
 
-    # Sort squad by projected points ascending (weakest first)
+    # Sort squad by effective points ascending (weakest first)
+    # Bench players (position 12-15) contribute ~20% of their value (auto-sub probability)
+    BENCH_WEIGHT = 0.2
     sellable = [p for p in squad_players if p["player_id"] not in exclude_player_ids]
-    sellable.sort(key=lambda x: x["projected_points"])
+    for p in sellable:
+        p["is_starter"] = p.get("squad_position", 0) <= 11
+        p["effective_points"] = p["projected_points"] * (1.0 if p["is_starter"] else BENCH_WEIGHT)
+    sellable.sort(key=lambda x: x["effective_points"])
 
     recommendations = []
     transfers_out = []
@@ -405,6 +410,7 @@ def get_transfer_recommendations(data, exclude_player_ids=None, max_transfers=2,
                 "position": weak_player["position"],
                 "price": weak_player["price"],
                 "projected_points": weak_player["projected_points"],
+                "is_starter": weak_player.get("is_starter", True),
             },
             "transfer_in": {
                 "player_id": best_replacement["player_id"],
@@ -440,6 +446,7 @@ def get_transfer_recommendations(data, exclude_player_ids=None, max_transfers=2,
         "recommendations": recommendations,
         "transfers_out": transfers_out,
         "transfers_in": transfers_in,
+        "lookahead_gw": num_gw,
     }
 
 
@@ -698,6 +705,295 @@ def get_squad_display(data):
         "points": user_info.get("summary_overall_points", 0),
         "rank": user_info.get("summary_overall_rank", 0),
         "current_gw": data.get("current_gw", 1),
+        "lookahead_gw": 5,
+    }
+
+
+def get_leagues_display(data):
+    """
+    Extract user's leagues from user_info.
+
+    Returns:
+        dict with:
+            - classic: list of classic leagues [{id, name, rank, total_entries}]
+            - h2h: list of H2H leagues
+    """
+    user_info = data.get("user_info", {})
+    leagues = user_info.get("leagues", {})
+
+    classic = []
+    for league in leagues.get("classic", []):
+        classic.append({
+            "id": league.get("id"),
+            "name": league.get("name", "Unknown League"),
+            "rank": league.get("entry_rank"),
+            "last_rank": league.get("entry_last_rank"),
+            "total_entries": league.get("league", {}) if isinstance(league.get("league"), dict) else None,
+        })
+
+    h2h = []
+    for league in leagues.get("h2h", []):
+        h2h.append({
+            "id": league.get("id"),
+            "name": league.get("name", "Unknown League"),
+            "rank": league.get("entry_rank"),
+            "last_rank": league.get("entry_last_rank"),
+        })
+
+    return {"classic": classic, "h2h": h2h}
+
+
+def get_rival_analysis(data, rival_picks, rival_info=None):
+    """
+    Compare user's squad against a rival's squad.
+
+    Args:
+        data: dict from load_all_data() (user's data)
+        rival_picks: rival's squad picks (from fetch_rival_squad)
+        rival_info: optional rival user info
+
+    Returns:
+        dict with:
+            - shared: players both teams have
+            - user_only: players only the user has
+            - rival_only: players only the rival has
+            - differential_score: how different the squads are (0-100%)
+    """
+    tables = build_lookup_tables(data)
+    players_by_id = tables["players_by_id"]
+    teams_by_id = tables["teams_by_id"]
+
+    # User's player IDs
+    user_squad = data.get("squad", {})
+    user_picks = user_squad.get("picks", [])
+    user_ids = set(p.get("element") for p in user_picks)
+
+    # Rival's player IDs
+    rival_pick_list = rival_picks.get("picks", [])
+    rival_ids = set(p.get("element") for p in rival_pick_list)
+
+    shared_ids = user_ids & rival_ids
+    user_only_ids = user_ids - rival_ids
+    rival_only_ids = rival_ids - user_ids
+
+    def _player_info(pid):
+        player = players_by_id.get(pid, {})
+        team_id = player.get("team", 0)
+        team_info = teams_by_id.get(team_id, {})
+        pos_id = player.get("element_type", 3)
+        fixtures = get_player_fixtures(
+            pid, team_id, tables["fixtures_by_gw"], tables["current_gw"]
+        )
+        projected = calculate_projected_points(player, fixtures)
+        return {
+            "player_id": pid,
+            "name": player.get("web_name", "Unknown"),
+            "team_name": team_info.get("short_name", "???"),
+            "position": POSITION_MAP.get(pos_id, "MID"),
+            "price": player.get("now_cost", 0) / 10,
+            "projected_points": projected,
+            "ownership": float(player.get("selected_by_percent", 0)),
+        }
+
+    shared = [_player_info(pid) for pid in shared_ids if pid in players_by_id]
+    user_only = [_player_info(pid) for pid in user_only_ids if pid in players_by_id]
+    rival_only = [_player_info(pid) for pid in rival_only_ids if pid in players_by_id]
+
+    # Sort by projected points
+    shared.sort(key=lambda x: x["projected_points"], reverse=True)
+    user_only.sort(key=lambda x: x["projected_points"], reverse=True)
+    rival_only.sort(key=lambda x: x["projected_points"], reverse=True)
+
+    total_players = len(user_ids | rival_ids)
+    differential_pct = round((len(user_only_ids) + len(rival_only_ids)) / max(total_players, 1) * 100, 1)
+
+    return {
+        "shared": shared,
+        "user_only": user_only,
+        "rival_only": rival_only,
+        "shared_count": len(shared),
+        "differential_count": len(user_only_ids) + len(rival_only_ids),
+        "differential_score": differential_pct,
+        "rival_info": {
+            "name": rival_info.get("player_first_name", "") + " " + rival_info.get("player_last_name", "") if rival_info else "Rival",
+            "team_name": rival_info.get("name", "Unknown") if rival_info else "Unknown",
+            "points": rival_info.get("summary_overall_points", 0) if rival_info else 0,
+            "rank": rival_info.get("summary_overall_rank", 0) if rival_info else 0,
+        },
+    }
+
+
+def get_chip_recommendations(data):
+    """
+    Recommend optimal chip usage based on fixtures and squad strength.
+
+    Evaluates:
+        - Bench Boost: best when all 15 players have good fixtures
+        - Triple Captain: best when top player has an easy fixture
+        - Free Hit: best when many squad players have hard/blank fixtures
+        - Wildcard: best when squad has many underperformers
+
+    Returns:
+        dict with:
+            - available_chips: list of chips still available
+            - recommendations: list of chip recommendations with GW and value
+    """
+    tables = build_lookup_tables(data)
+    players_by_id = tables["players_by_id"]
+    teams_by_id = tables["teams_by_id"]
+    fixtures_by_gw = tables["fixtures_by_gw"]
+    current_gw = tables["current_gw"]
+
+    # Determine which chips are used
+    history = data.get("history", {})
+    used_chips = history.get("chips", [])
+    used_chip_names = set(c.get("name", "").lower() for c in used_chips)
+
+    ALL_CHIPS = ["wildcard", "freehit", "bboost", "3xc"]
+    CHIP_LABELS = {
+        "wildcard": "Wildcard",
+        "freehit": "Free Hit",
+        "bboost": "Bench Boost",
+        "3xc": "Triple Captain",
+    }
+
+    # Check availability (wildcard can be used twice: before and after GW19)
+    available = []
+    for chip in ALL_CHIPS:
+        if chip == "wildcard":
+            # Count wildcard uses
+            wc_uses = sum(1 for c in used_chips if c.get("name", "").lower() == "wildcard")
+            if wc_uses < 2:
+                available.append(chip)
+        elif chip not in used_chip_names:
+            available.append(chip)
+
+    # Get squad picks
+    squad = data.get("squad", {})
+    picks = squad.get("picks", [])
+
+    # Evaluate each GW for chip value
+    num_gw = 8  # Look ahead 8 GWs for chip planning
+    gw_analysis = []
+
+    for gw_offset in range(1, num_gw + 1):
+        target_gw = current_gw + gw_offset
+
+        # Calculate each squad player's projected points for this GW
+        starters = []
+        bench = []
+        for pick in picks:
+            pid = pick.get("element")
+            player = players_by_id.get(pid)
+            if not player:
+                continue
+
+            team_id = player.get("team", 0)
+            fixtures = []
+            gw_fixtures = fixtures_by_gw.get(target_gw, [])
+            for fixture in gw_fixtures:
+                if fixture.get("team_h") == team_id:
+                    fixtures.append({
+                        "difficulty": fixture.get("team_h_difficulty", 3),
+                        "is_home": True,
+                    })
+                elif fixture.get("team_a") == team_id:
+                    fixtures.append({
+                        "difficulty": fixture.get("team_a_difficulty", 3),
+                        "is_home": False,
+                    })
+
+            projected = calculate_projected_points(player, fixtures) if fixtures else 0
+            squad_pos = pick.get("position", 0)
+
+            entry = {
+                "player_id": pid,
+                "name": player.get("web_name", "Unknown"),
+                "projected": round(projected, 2),
+                "has_fixture": len(fixtures) > 0,
+            }
+
+            if squad_pos <= 11:
+                starters.append(entry)
+            else:
+                bench.append(entry)
+
+        starter_total = sum(p["projected"] for p in starters)
+        bench_total = sum(p["projected"] for p in bench)
+        best_player = max(starters, key=lambda x: x["projected"]) if starters else None
+        blank_count = sum(1 for p in starters if not p["has_fixture"])
+
+        gw_analysis.append({
+            "gw": target_gw,
+            "starter_total": round(starter_total, 2),
+            "bench_total": round(bench_total, 2),
+            "best_captain_value": round(best_player["projected"], 2) if best_player else 0,
+            "best_captain_name": best_player["name"] if best_player else "?",
+            "blank_starters": blank_count,
+            "all_total": round(starter_total + bench_total, 2),
+        })
+
+    # Generate recommendations for each available chip
+    recommendations = []
+
+    if "bboost" in available:
+        # Best GW for Bench Boost = highest bench contribution
+        best_bb = max(gw_analysis, key=lambda x: x["bench_total"])
+        recommendations.append({
+            "chip": "bboost",
+            "label": "Bench Boost",
+            "best_gw": best_bb["gw"],
+            "value": best_bb["bench_total"],
+            "reason": f"Bench contributes {best_bb['bench_total']:.1f} pts in GW{best_bb['gw']}",
+            "gw_values": [{"gw": g["gw"], "value": round(g["bench_total"], 1)} for g in gw_analysis],
+        })
+
+    if "3xc" in available:
+        # Best GW for Triple Captain = highest single captain value
+        best_tc = max(gw_analysis, key=lambda x: x["best_captain_value"])
+        recommendations.append({
+            "chip": "3xc",
+            "label": "Triple Captain",
+            "best_gw": best_tc["gw"],
+            "value": best_tc["best_captain_value"],
+            "reason": f"{best_tc['best_captain_name']} projected {best_tc['best_captain_value']:.1f} pts in GW{best_tc['gw']}",
+            "gw_values": [{"gw": g["gw"], "value": round(g["best_captain_value"], 1)} for g in gw_analysis],
+        })
+
+    if "freehit" in available:
+        # Best GW for Free Hit = most starters with blanks or lowest starter total
+        best_fh = min(gw_analysis, key=lambda x: x["starter_total"])
+        recommendations.append({
+            "chip": "freehit",
+            "label": "Free Hit",
+            "best_gw": best_fh["gw"],
+            "value": best_fh["starter_total"],
+            "reason": f"Squad only projects {best_fh['starter_total']:.1f} pts in GW{best_fh['gw']} — rebuild for one week",
+            "gw_values": [{"gw": g["gw"], "value": round(g["starter_total"], 1)} for g in gw_analysis],
+        })
+
+    if "wildcard" in available:
+        # Wildcard: compare current squad strength vs top available players
+        squad_players = _get_squad_players(data)
+        current_total = sum(p["projected_points"] for p in squad_players)
+        avg_projected = current_total / max(len(squad_players), 1)
+        weak_count = sum(1 for p in squad_players if p["projected_points"] < avg_projected * 0.6)
+        recommendations.append({
+            "chip": "wildcard",
+            "label": "Wildcard",
+            "best_gw": current_gw + 1,
+            "value": weak_count,
+            "reason": f"{weak_count} players underperforming (below 60% of squad avg)",
+            "gw_values": [],
+        })
+
+    # Sort by value descending (most impactful chip first)
+    recommendations.sort(key=lambda x: x["value"], reverse=True)
+
+    return {
+        "available_chips": [{"chip": c, "label": CHIP_LABELS[c]} for c in available],
+        "used_chips": [{"chip": c.get("name", ""), "gw": c.get("event")} for c in used_chips],
+        "recommendations": recommendations,
     }
 
 

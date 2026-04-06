@@ -101,6 +101,7 @@ settings = {
     "max_transfers": 2,
     "lookahead_gw": 5,
     "optimization_criteria": "projected_points",
+    "rival_ids": [],
 }
 
 # --- Data Cache ---
@@ -317,6 +318,100 @@ def get_captains():
     except Exception as e:
         log.exception("Error calculating captains for team %s", team_id)
         return jsonify({"error": "Failed to calculate captain picks."}), 500
+
+
+# --- API: Leagues ---
+
+@app.route("/api/leagues")
+@rate_limited
+def get_leagues():
+    team_id, err = _get_team_id()
+    if err:
+        return jsonify({"error": err}), 400
+
+    try:
+        data = _get_data(team_id)
+        result = algorithm.get_leagues_display(data)
+        return jsonify(result)
+    except Exception as e:
+        log.exception("Error fetching leagues for team %s", team_id)
+        return jsonify({"error": "Failed to load leagues."}), 500
+
+
+@app.route("/api/leagues/<int:league_id>/standings")
+@rate_limited
+def get_league_standings(league_id):
+    team_id, err = _get_team_id()
+    if err:
+        return jsonify({"error": err}), 400
+
+    if not (1 <= league_id <= 100_000_000):
+        return jsonify({"error": "Invalid league ID"}), 400
+
+    try:
+        standings = data_fetcher.fetch_league_standings(league_id)
+        return jsonify(standings)
+    except Exception as e:
+        log.exception("Error fetching standings for league %s", league_id)
+        return jsonify({"error": "Failed to load league standings."}), 500
+
+
+# --- API: Rivals ---
+
+@app.route("/api/rivals", methods=["GET"])
+@rate_limited
+def get_rivals():
+    return jsonify({"rival_ids": settings.get("rival_ids", [])})
+
+
+@app.route("/api/rivals", methods=["POST"])
+@rate_limited
+def set_rivals():
+    body = request.get_json(silent=True) or {}
+    rival_ids = body.get("rival_ids", [])
+    if isinstance(rival_ids, list) and len(rival_ids) <= 10:
+        settings["rival_ids"] = [int(i) for i in rival_ids if isinstance(i, (int, float))]
+    return jsonify({"status": "updated", "rival_ids": settings.get("rival_ids", [])})
+
+
+@app.route("/api/rivals/<int:rival_team_id>/analysis")
+@rate_limited
+def get_rival_analysis(rival_team_id):
+    team_id, err = _get_team_id()
+    if err:
+        return jsonify({"error": err}), 400
+
+    if not (1 <= rival_team_id <= 20_000_000):
+        return jsonify({"error": "Invalid rival team ID"}), 400
+
+    try:
+        data = _get_data(team_id)
+        current_gw = data.get("current_gw", 1)
+        rival_picks = data_fetcher.fetch_rival_squad(rival_team_id, current_gw)
+        rival_info = data_fetcher.fetch_user_info(rival_team_id)
+        result = algorithm.get_rival_analysis(data, rival_picks, rival_info)
+        return jsonify(result)
+    except Exception as e:
+        log.exception("Error analyzing rival %s", rival_team_id)
+        return jsonify({"error": "Failed to analyze rival."}), 500
+
+
+# --- API: Chip Recommendations ---
+
+@app.route("/api/chips")
+@rate_limited
+def get_chips():
+    team_id, err = _get_team_id()
+    if err:
+        return jsonify({"error": err}), 400
+
+    try:
+        data = _get_data(team_id)
+        result = algorithm.get_chip_recommendations(data)
+        return jsonify(result)
+    except Exception as e:
+        log.exception("Error calculating chip recommendations for team %s", team_id)
+        return jsonify({"error": "Failed to calculate chip recommendations."}), 500
 
 
 # --- API: Rotation Strategy ---

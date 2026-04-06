@@ -1,11 +1,11 @@
 import React, { useState, useCallback } from 'react';
-import { SquadTab, RecommendationsTab, CaptainTab, RotationTab, SettingsTab, PlayerDetailModal } from './components/index';
+import { SquadTab, RecommendationsTab, CaptainTab, RotationTab, LeaguesTab, ChipsTab, SettingsTab, PlayerDetailModal } from './components/index';
 
 // In production, frontend is served by Flask — use relative URLs.
 // In development, proxy is configured in package.json.
 const API_BASE = '/api';
 
-const TABS = ['Squad', 'Transfers', 'Captain', 'Rotation', 'Settings'];
+const TABS = ['Squad', 'Transfer Recs', 'Captain', 'Rotation', 'Leagues', 'Chips', 'Settings'];
 
 function App() {
   const [activeTab, setActiveTab] = useState('Squad');
@@ -36,7 +36,7 @@ function App() {
     setError(null);
     try {
       const params = refresh ? { refresh: 'true' } : {};
-      const [squad, recommendations, captains, rotation] = await Promise.all([
+      const [squad, recommendations, captains, rotation, leagues, chips] = await Promise.all([
         fetchData('squad', params),
         fetchData('recommendations', {
           max_transfers: settings.max_transfers,
@@ -44,8 +44,10 @@ function App() {
         }),
         fetchData('captains'),
         fetchData('rotation', { num_gw: settings.lookahead_gw }),
+        fetchData('leagues'),
+        fetchData('chips'),
       ]);
-      setData({ squad, recommendations, captains, rotation });
+      setData({ squad, recommendations, captains, rotation, leagues, chips });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -93,12 +95,16 @@ function App() {
     switch (activeTab) {
       case 'Squad':
         return <SquadTab data={data.squad} loading={loading} onPlayerClick={openPlayerDetail} />;
-      case 'Transfers':
+      case 'Transfer Recs':
         return <RecommendationsTab data={data.recommendations} loading={loading} onPlayerClick={openPlayerDetail} />;
       case 'Captain':
         return <CaptainTab data={data.captains} loading={loading} onPlayerClick={openPlayerDetail} />;
       case 'Rotation':
         return <RotationTab data={data.rotation} loading={loading} onPlayerClick={openPlayerDetail} />;
+      case 'Leagues':
+        return <LeaguesTab data={data.leagues} loading={loading} teamId={teamId} fetchData={fetchData} onPlayerClick={openPlayerDetail} />;
+      case 'Chips':
+        return <ChipsTab data={data.chips} loading={loading} />;
       case 'Settings':
         return <SettingsTab settings={settings} onChange={handleSettingsChange} />;
       default:

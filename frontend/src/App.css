@@ -76,6 +76,7 @@ body {
 .player-price { color: var(--gold); font-weight: 700; }
 .player-points { font-size: 0.85rem; color: var(--text-secondary); }
 .captain-badge { background: var(--gold); color: var(--text-primary); font-size: 0.7rem; font-weight: 700; padding: 0.15rem 0.4rem; border-radius: 0.25rem; margin-left: 0.5rem; }
+.bench-badge { background: var(--bg-dark); color: var(--text-secondary); font-size: 0.65rem; font-weight: 600; padding: 0.1rem 0.35rem; border-radius: 0.25rem; margin-left: 0.4rem; border: 1px solid var(--border); }
 
 /* Transfer cards */
 .transfer-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 0.75rem; box-shadow: 0 2px 8px var(--shadow); }
