@@ -1,8 +1,129 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+
+/* ========== Manager ID localStorage helpers ========== */
+const MANAGER_HISTORY_KEY = 'fpl_manager_history';
+
+export function loadManagerHistory() {
+  try {
+    const raw = localStorage.getItem(MANAGER_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveManagerToHistory(id, teamName) {
+  if (!id) return;
+  const history = loadManagerHistory();
+  const filtered = history.filter(h => String(h.id) !== String(id));
+  const next = [{ id: String(id), team_name: teamName || '', last_used: Date.now() }, ...filtered].slice(0, 20);
+  try { localStorage.setItem(MANAGER_HISTORY_KEY, JSON.stringify(next)); } catch {}
+  return next;
+}
+
+export function removeManagerFromHistory(id) {
+  const next = loadManagerHistory().filter(h => String(h.id) !== String(id));
+  try { localStorage.setItem(MANAGER_HISTORY_KEY, JSON.stringify(next)); } catch {}
+  return next;
+}
+
+/* ========== Manager ID input with searchable history ========== */
+export function ManagerIdInput({ value, onChange, onSubmit, loading }) {
+  const [history, setHistory] = useState(() => loadManagerHistory());
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
+
+  // Refresh history when localStorage updates externally (e.g. after a successful load)
+  useEffect(() => {
+    const sync = () => setHistory(loadManagerHistory());
+    window.addEventListener('fpl-history-updated', sync);
+    return () => window.removeEventListener('fpl-history-updated', sync);
+  }, []);
+
+  const filtered = history.filter(h =>
+    !value || String(h.id).includes(String(value)) || (h.team_name || '').toLowerCase().includes(String(value).toLowerCase())
+  );
+
+  const pick = (id) => {
+    onChange(String(id));
+    setOpen(false);
+    setTimeout(() => onSubmit?.(), 0);
+  };
+
+  const removeEntry = (e, id) => {
+    e.stopPropagation();
+    const next = removeManagerFromHistory(id);
+    setHistory(next);
+  };
+
+  return (
+    <div ref={wrapRef} style={{position: 'relative', display: 'inline-block'}}>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        placeholder="Team ID"
+        className="team-input"
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '0.25rem',
+          background: 'var(--bg-card, #1e2433)', border: '1px solid var(--border, #334155)',
+          borderRadius: '0.4rem', maxHeight: '260px', overflowY: 'auto', zIndex: 50,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        }}>
+          {filtered.map(h => (
+            <div
+              key={h.id}
+              onClick={() => pick(h.id)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '0.5rem 0.65rem', cursor: 'pointer', borderBottom: '1px solid var(--border, #334155)',
+                fontSize: '0.85rem',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(200,169,110,0.08)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <div style={{flex: 1, minWidth: 0}}>
+                <div style={{fontWeight: 600, color: 'var(--text-primary, #e2e8f0)'}}>{h.id}</div>
+                {h.team_name && (
+                  <div style={{fontSize: '0.7rem', color: 'var(--text-secondary, #94a3b8)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+                    {h.team_name}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={(e) => removeEntry(e, h.id)}
+                title="Remove from history"
+                style={{
+                  background: 'transparent', border: 'none', color: 'var(--text-secondary, #94a3b8)',
+                  cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem', marginLeft: '0.5rem',
+                }}
+              >&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 /* ========== Squad Tab ========== */
-export function SquadTab({ data, loading, onPlayerClick }) {
-  const [view, setView] = useState('cards'); // 'cards' or 'table'
+export function SquadTab({ data, recommendations, loading, onPlayerClick }) {
+  const [view, setView] = useState('pitch'); // 'pitch', 'cards', or 'table'
   const [sortKey, setSortKey] = useState('projected_points');
   const [sortAsc, setSortAsc] = useState(false);
 
@@ -59,9 +180,15 @@ export function SquadTab({ data, loading, onPlayerClick }) {
 
       {/* View Toggle */}
       <div className="view-toggle">
+        <button className={`view-btn ${view === 'pitch' ? 'view-active' : ''}`} onClick={() => setView('pitch')}>Pitch</button>
         <button className={`view-btn ${view === 'cards' ? 'view-active' : ''}`} onClick={() => setView('cards')}>Cards</button>
         <button className={`view-btn ${view === 'table' ? 'view-active' : ''}`} onClick={() => setView('table')}>Table</button>
       </div>
+
+      {/* Pitch View */}
+      {view === 'pitch' && (
+        <PitchView squad={squad} recommendations={recommendations} onPlayerClick={onPlayerClick} />
+      )}
 
       {/* Card View */}
       {view === 'cards' && ['GK', 'DEF', 'MID', 'FWD'].map(pos => (
@@ -131,6 +258,148 @@ export function SquadTab({ data, loading, onPlayerClick }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========== Pitch View ========== */
+export function PitchView({ squad, recommendations, onPlayerClick }) {
+  const [showRecommended, setShowRecommended] = useState(false);
+
+  const recs = recommendations?.recommendations || [];
+  const hasRecs = recs.length > 0;
+
+  // Build the "with recommended changes" XI by applying each transfer to the squad.
+  // outIds = players removed; inPlayers = synthetic incoming player cards (we don't
+  // have full squad info for incomings, so we render them from the recommendation payload).
+  const outIds = new Set(recs.map(r => r.transfer_out?.player_id));
+  const inPlayers = recs.map(r => ({
+    player_id: r.transfer_in?.player_id,
+    name: r.transfer_in?.name,
+    team_name: r.transfer_in?.team_name,
+    position: r.transfer_in?.position,
+    price: r.transfer_in?.price,
+    projected_points: r.transfer_in?.projected_points,
+    element_type: ({ GK: 1, DEF: 2, MID: 3, FWD: 4 })[r.transfer_in?.position] || 3,
+    squad_position: 1, // placed in starting XI by default
+    _isIncoming: true,
+  }));
+
+  // The displayed squad: either the current one, or current minus outs plus ins.
+  const displayedSquad = !showRecommended || !hasRecs
+    ? (squad || [])
+    : [
+        ...(squad || []).map(p => ({
+          ...p,
+          _isOutgoing: outIds.has(p.player_id),
+        })),
+        ...inPlayers,
+      ];
+
+  // Group starting XI by position; bench separately (squad_position 12-15).
+  const starters = displayedSquad.filter(p => (p.squad_position || 0) <= 11 && !p._isOutgoing);
+  const stillOnPitchOuts = displayedSquad.filter(p => (p.squad_position || 0) <= 11 && p._isOutgoing);
+  const bench = displayedSquad.filter(p => (p.squad_position || 0) > 11 && !p._isOutgoing);
+
+  // For "recommended" view, keep outs visible on the pitch (red border) so the
+  // user can see what's being swapped. Group everything by position row.
+  const xiForDisplay = showRecommended ? [...starters, ...stillOnPitchOuts] : starters;
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const p of xiForDisplay) {
+    const pos = p.position || 'MID';
+    if (byPos[pos]) byPos[pos].push(p);
+  }
+
+  return (
+    <div className="fade-in">
+      {hasRecs && (
+        <div className="view-toggle" style={{marginBottom: '0.75rem'}}>
+          <button
+            className={`view-btn ${!showRecommended ? 'view-active' : ''}`}
+            onClick={() => setShowRecommended(false)}
+          >
+            Current
+          </button>
+          <button
+            className={`view-btn ${showRecommended ? 'view-active' : ''}`}
+            onClick={() => setShowRecommended(true)}
+          >
+            With Recommended Change{recs.length > 1 ? 's' : ''}
+          </button>
+        </div>
+      )}
+
+      <div className="pitch">
+        {['GK', 'DEF', 'MID', 'FWD'].map(pos => (
+          <div key={pos} className="pitch-row">
+            {(byPos[pos] || []).map(p => (
+              <PitchPlayerCard
+                key={`${p.player_id}-${p._isIncoming ? 'in' : p._isOutgoing ? 'out' : 'cur'}`}
+                player={p}
+                onClick={() => onPlayerClick?.(p)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* Bench row */}
+      <div style={{marginTop: '0.75rem'}}>
+        <div style={{fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 700, marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em'}}>
+          Bench
+        </div>
+        <div className="pitch-bench">
+          {bench.map(p => (
+            <PitchPlayerCard
+              key={p.player_id}
+              player={p}
+              onClick={() => onPlayerClick?.(p)}
+              compact
+            />
+          ))}
+        </div>
+      </div>
+
+      {showRecommended && hasRecs && (
+        <div style={{marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
+          <span><span style={{display: 'inline-block', width: '10px', height: '10px', background: 'transparent', border: '2px solid var(--success, #22c55e)', borderRadius: '2px', marginRight: '0.3rem', verticalAlign: 'middle'}}></span>Incoming</span>
+          <span><span style={{display: 'inline-block', width: '10px', height: '10px', background: 'transparent', border: '2px solid var(--danger, #ef4444)', borderRadius: '2px', marginRight: '0.3rem', verticalAlign: 'middle'}}></span>Outgoing</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PitchPlayerCard({ player, onClick, compact }) {
+  const borderColor = player._isIncoming
+    ? 'var(--success, #22c55e)'
+    : player._isOutgoing
+    ? 'var(--danger, #ef4444)'
+    : player.is_captain
+    ? 'var(--gold, #c8a96e)'
+    : 'var(--border, #334155)';
+  return (
+    <div
+      className="pitch-card clickable"
+      onClick={onClick}
+      style={{
+        borderColor,
+        borderWidth: (player._isIncoming || player._isOutgoing || player.is_captain) ? '2px' : '1px',
+        opacity: player._isOutgoing ? 0.6 : 1,
+      }}
+    >
+      <div className="pitch-card-name">
+        {player.name}
+        {player.is_captain && <span className="captain-badge">C</span>}
+        {player.is_vice_captain && <span className="captain-badge" style={{background: '#64748b'}}>VC</span>}
+      </div>
+      <div className="pitch-card-team">{player.team_name}</div>
+      {!compact && (
+        <div className="pitch-card-stats">
+          <span>{player.projected_points ?? '-'} pts</span>
+          <span>&pound;{player.price?.toFixed(1)}m</span>
         </div>
       )}
     </div>
@@ -553,7 +822,7 @@ export function ChipsTab({ data, loading }) {
   if (loading) return <div className="loading-text">Analyzing chip strategy...</div>;
   if (!data) return <div className="empty-state">Load your team data to see chip recommendations.</div>;
 
-  const { available_chips, used_chips, recommendations } = data;
+  const { used_chips, recommendations, chip_sets, half_split_gw } = data;
 
   const chipIcons = {
     bboost: '\u2B06',     // ⬆
@@ -562,33 +831,61 @@ export function ChipsTab({ data, loading }) {
     wildcard: '\u2606',   // ☆
   };
 
+  // 2025/26: each manager has TWO sets of four chips, one per half-season.
+  // chip_sets is sourced from the API; never hardcode counts.
+  const renderChipCard = (entry) => {
+    const { chip, label, state, gw } = entry;
+    const stateColor = {
+      available: 'var(--success)',
+      used: 'var(--text-secondary)',
+      expired: 'var(--danger)',
+    }[state] || 'var(--text-secondary)';
+    const stateLabel = {
+      available: 'Available',
+      used: `Used GW${gw ?? '?'}`,
+      expired: 'Expired',
+    }[state] || state;
+    return (
+      <div key={chip} className="stat-card" style={{
+        opacity: state === 'available' ? 1 : 0.55,
+        borderColor: state === 'available' ? 'var(--gold)' : 'var(--border)',
+        textDecoration: state === 'expired' ? 'line-through' : 'none',
+      }}>
+        <div className="stat-value" style={{fontSize: '1.25rem'}}>
+          {chipIcons[chip] || '?'}
+        </div>
+        <div className="stat-label">{label}</div>
+        <div style={{fontSize: '0.7rem', color: stateColor, marginTop: '0.25rem', fontWeight: 600}}>
+          {stateLabel}
+        </div>
+      </div>
+    );
+  };
+
+  const splitGw = half_split_gw || 19;
+  const firstHalf = chip_sets?.first || [];
+  const secondHalf = chip_sets?.second || [];
+
   return (
     <div className="fade-in">
       <h2 style={{fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.25rem', fontFamily: "'Playfair Display', Georgia, serif", color: 'var(--accent)'}}>
         Chip Strategy
       </h2>
 
-      {/* Chip Status */}
+      {/* First-half chip set (GW1-19) */}
+      <h3 style={{fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em'}}>
+        First Half (GW1&ndash;{splitGw})
+      </h3>
+      <div className="stats-grid" style={{marginBottom: '1.25rem'}}>
+        {firstHalf.map(renderChipCard)}
+      </div>
+
+      {/* Second-half chip set (GW20-38) */}
+      <h3 style={{fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em'}}>
+        Second Half (GW{splitGw + 1}&ndash;38)
+      </h3>
       <div className="stats-grid" style={{marginBottom: '1.5rem'}}>
-        {['bboost', '3xc', 'freehit', 'wildcard'].map(chip => {
-          const isAvailable = available_chips?.some(c => c.chip === chip);
-          const usedChip = used_chips?.find(c => c.chip === chip);
-          const label = {bboost: 'Bench Boost', '3xc': 'Triple Captain', freehit: 'Free Hit', wildcard: 'Wildcard'}[chip];
-          return (
-            <div key={chip} className="stat-card" style={{
-              opacity: isAvailable ? 1 : 0.5,
-              borderColor: isAvailable ? 'var(--gold)' : 'var(--border)',
-            }}>
-              <div className="stat-value" style={{fontSize: '1.25rem'}}>
-                {chipIcons[chip] || '?'}
-              </div>
-              <div className="stat-label">{label}</div>
-              <div style={{fontSize: '0.7rem', color: isAvailable ? 'var(--success)' : 'var(--text-secondary)', marginTop: '0.25rem', fontWeight: 600}}>
-                {isAvailable ? 'Available' : `Used GW${usedChip?.gw || '?'}`}
-              </div>
-            </div>
-          );
-        })}
+        {secondHalf.map(renderChipCard)}
       </div>
 
       {/* Recommendations */}
@@ -655,12 +952,195 @@ export function ChipsTab({ data, loading }) {
           <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
             {used_chips.map((c, i) => (
               <span key={i} className="player-badge" style={{opacity: 0.6}}>
-                {c.chip} &middot; GW{c.gw}
+                {c.chip} &middot; GW{c.gw} &middot; {c.half === 'first' ? '1st half' : '2nd half'}
               </span>
             ))}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ========== Planning Tab (Recommendation History + Transfer Plan) ========== */
+
+const REC_HISTORY_KEY = 'fpl_rec_history';
+const PLAN_KEY_PREFIX = 'fpl_transfer_plan_';
+
+export function appendRecHistory(teamId, gw, recommendations) {
+  if (!teamId || !recommendations || !Array.isArray(recommendations) || recommendations.length === 0) return;
+  try {
+    const raw = localStorage.getItem(REC_HISTORY_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    // De-dupe: skip if the most-recent entry for this team+gw has identical out/in pairs.
+    const lastForTeamGw = list.find(e => String(e.team_id) === String(teamId) && e.gw === gw);
+    const sig = recommendations.map(r => `${r.transfer_out?.player_id}->${r.transfer_in?.player_id}`).join('|');
+    if (lastForTeamGw && lastForTeamGw.signature === sig) return;
+    list.unshift({
+      team_id: String(teamId),
+      gw,
+      timestamp: Date.now(),
+      signature: sig,
+      recommendations: recommendations.map(r => ({
+        out_name: r.transfer_out?.name,
+        out_team: r.transfer_out?.team_name,
+        in_name: r.transfer_in?.name,
+        in_team: r.transfer_in?.team_name,
+        net_points_delta: r.net_points_delta,
+        price_delta: r.price_delta,
+      })),
+    });
+    localStorage.setItem(REC_HISTORY_KEY, JSON.stringify(list.slice(0, 100)));
+  } catch {}
+}
+
+function loadRecHistory(teamId) {
+  try {
+    const raw = localStorage.getItem(REC_HISTORY_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return list.filter(e => !teamId || String(e.team_id) === String(teamId));
+  } catch { return []; }
+}
+
+function loadTransferPlan(teamId) {
+  if (!teamId) return [];
+  try {
+    const raw = localStorage.getItem(PLAN_KEY_PREFIX + teamId);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveTransferPlan(teamId, plan) {
+  if (!teamId) return;
+  try { localStorage.setItem(PLAN_KEY_PREFIX + teamId, JSON.stringify(plan)); } catch {}
+}
+
+export function PlanningTab({ teamId, currentGw }) {
+  const [history, setHistory] = useState(() => loadRecHistory(teamId));
+  const [plan, setPlan] = useState(() => loadTransferPlan(teamId));
+
+  useEffect(() => {
+    setHistory(loadRecHistory(teamId));
+    setPlan(loadTransferPlan(teamId));
+  }, [teamId]);
+
+  useEffect(() => {
+    const sync = () => setHistory(loadRecHistory(teamId));
+    window.addEventListener('fpl-rec-history-updated', sync);
+    return () => window.removeEventListener('fpl-rec-history-updated', sync);
+  }, [teamId]);
+
+  const updatePlan = (next) => {
+    setPlan(next);
+    saveTransferPlan(teamId, next);
+  };
+
+  const addRow = () => {
+    const baseGw = (currentGw || 1) + 1;
+    updatePlan([...plan, { gw: baseGw, out: '', in: '', reason: '', confirmed: false }]);
+  };
+
+  const updateRow = (idx, field, value) => {
+    const next = plan.map((r, i) => i === idx ? { ...r, [field]: value } : r);
+    updatePlan(next);
+  };
+
+  const removeRow = (idx) => updatePlan(plan.filter((_, i) => i !== idx));
+
+  if (!teamId) return <div className="empty-state">Enter your team ID to use the planning tools.</div>;
+
+  // Show plans for the next 4 gameweeks
+  const horizonEnd = (currentGw || 1) + 4;
+
+  return (
+    <div className="fade-in">
+      <h2 style={{fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem', fontFamily: "'Playfair Display', Georgia, serif", color: 'var(--accent)'}}>
+        Planning
+      </h2>
+
+      {/* Transfer Plan */}
+      <h3 style={{fontSize: '1rem', fontWeight: 700, color: 'var(--accent)', marginBottom: '0.5rem', fontFamily: "'Playfair Display', Georgia, serif"}}>
+        Transfer Plan (next 2&ndash;4 GWs)
+      </h3>
+      <p style={{fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem'}}>
+        Plan ahead. Saved locally per manager ID. Showing GW{(currentGw || 1) + 1}&ndash;GW{horizonEnd}.
+      </p>
+      <table className="plan-table">
+        <thead>
+          <tr>
+            <th style={{width: '60px'}}>GW</th>
+            <th>Out</th>
+            <th>In</th>
+            <th>Reason</th>
+            <th style={{width: '70px'}}>Done</th>
+            <th style={{width: '40px'}}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {plan.length === 0 && (
+            <tr><td colSpan="6" style={{color: 'var(--text-secondary)', textAlign: 'center', padding: '0.75rem'}}>No planned transfers yet.</td></tr>
+          )}
+          {plan.map((row, i) => (
+            <tr key={i}>
+              <td>
+                <input
+                  type="number"
+                  min="1" max="38"
+                  value={row.gw}
+                  onChange={(e) => updateRow(i, 'gw', parseInt(e.target.value) || 1)}
+                />
+              </td>
+              <td><input type="text" value={row.out} onChange={(e) => updateRow(i, 'out', e.target.value)} placeholder="Player out" /></td>
+              <td><input type="text" value={row.in} onChange={(e) => updateRow(i, 'in', e.target.value)} placeholder="Player in" /></td>
+              <td><input type="text" value={row.reason} onChange={(e) => updateRow(i, 'reason', e.target.value)} placeholder="Why?" /></td>
+              <td style={{textAlign: 'center'}}>
+                <input
+                  type="checkbox"
+                  checked={!!row.confirmed}
+                  onChange={(e) => updateRow(i, 'confirmed', e.target.checked)}
+                  style={{width: 'auto'}}
+                />
+              </td>
+              <td>
+                <button
+                  onClick={() => removeRow(i)}
+                  title="Remove"
+                  style={{background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '1rem'}}
+                >&times;</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button className="plan-add-btn" onClick={addRow}>+ Add planned transfer</button>
+
+      {/* Recommendation History */}
+      <h3 style={{fontSize: '1rem', fontWeight: 700, color: 'var(--accent)', marginTop: '2rem', marginBottom: '0.5rem', fontFamily: "'Playfair Display', Georgia, serif"}}>
+        Recommendation History
+      </h3>
+      <p style={{fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem'}}>
+        Every recommendation generated for this manager, newest first.
+      </p>
+      {history.length === 0 && <div className="empty-state">No recommendations recorded yet.</div>}
+      {history.map((entry, i) => (
+        <div key={i} className="rec-history-entry">
+          <div className="rec-history-meta">
+            GW {entry.gw} &middot; {new Date(entry.timestamp).toLocaleString()}
+          </div>
+          {entry.recommendations.map((r, j) => (
+            <div key={j} className="rec-history-line">
+              <span style={{color: 'var(--danger)'}}>&minus; {r.out_name}</span>
+              {' \u2192 '}
+              <span style={{color: 'var(--success)'}}>+ {r.in_name}</span>
+              {typeof r.net_points_delta === 'number' && (
+                <span style={{color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.75rem'}}>
+                  ({r.net_points_delta > 0 ? '+' : ''}{r.net_points_delta?.toFixed?.(1)} pts)
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -674,16 +1154,19 @@ export function SettingsTab({ settings, onChange }) {
       <div className="settings-group">
         <label className="settings-label">
           Max Transfers: {settings.max_transfers}
+          <span style={{fontSize: '0.7rem', color: 'var(--text-secondary)', marginLeft: '0.5rem', fontWeight: 400}}>
+            (synced from FPL API on load)
+          </span>
         </label>
         <input
           type="range"
-          min="1" max="5" step="1"
+          min="0" max="5" step="1"
           value={settings.max_transfers}
           onChange={(e) => onChange({ max_transfers: parseInt(e.target.value) })}
           className="settings-slider"
         />
         <div style={{display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)', fontSize: '0.75rem'}}>
-          <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+          <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
         </div>
       </div>
 

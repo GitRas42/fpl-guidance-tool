@@ -1,15 +1,23 @@
-import React, { useState, useCallback } from 'react';
-import { SquadTab, RecommendationsTab, CaptainTab, RotationTab, LeaguesTab, ChipsTab, SettingsTab, PlayerDetailModal } from './components/index';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { SquadTab, RecommendationsTab, CaptainTab, RotationTab, LeaguesTab, ChipsTab, SettingsTab, PlayerDetailModal, ManagerIdInput, loadManagerHistory, saveManagerToHistory, PlanningTab, appendRecHistory } from './components/index';
 
 // In production, frontend is served by Flask — use relative URLs.
 // In development, proxy is configured in package.json.
 const API_BASE = '/api';
 
-const TABS = ['Squad', 'Transfer Recs', 'Captain', 'Rotation', 'Leagues', 'Chips', 'Settings'];
+const TABS = ['Squad', 'Transfer Recs', 'Captain', 'Rotation', 'Leagues', 'Chips', 'Planning', 'Settings'];
+
+// Owner's FPL manager ID — one-click shortcut in the header.
+const MY_TEAM_ID = '4067235';
 
 function App() {
   const [activeTab, setActiveTab] = useState('Squad');
-  const [teamId, setTeamId] = useState('');
+  // Persist manager ID across sessions (Feature 2): seed from the most-recent
+  // entry in localStorage so the user never has to retype it.
+  const [teamId, setTeamId] = useState(() => {
+    const hist = loadManagerHistory();
+    return hist[0]?.id || '';
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [data, setData] = useState({});
@@ -48,6 +56,16 @@ function App() {
         fetchData('chips'),
       ]);
       setData({ squad, recommendations, captains, rotation, leagues, chips });
+      // Persist this manager ID + team name to localStorage history
+      if (squad) {
+        saveManagerToHistory(teamId, squad.team_name || '');
+        window.dispatchEvent(new Event('fpl-history-updated'));
+      }
+      // Append the recommendation set to the per-manager history log
+      if (recommendations?.recommendations?.length) {
+        appendRecHistory(teamId, squad?.current_gw, recommendations.recommendations);
+        window.dispatchEvent(new Event('fpl-rec-history-updated'));
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -88,13 +106,49 @@ function App() {
   };
 
   const handleSettingsChange = (newSettings) => {
+    // Mark transfer count as user-overridden so the auto-sync effect won't
+    // clobber it on the next squad refresh.
+    if ('max_transfers' in newSettings) {
+      transferOverrideRef.current = true;
+    }
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
+
+  // Auto-load after a programmatic teamId change (e.g. "My Team" shortcut).
+  // We can't call loadAll() synchronously right after setTeamId() because
+  // fetchData closes over the current teamId — we need to wait for the
+  // re-render, then trigger the load via this effect.
+  const pendingLoadRef = useRef(false);
+  useEffect(() => {
+    if (pendingLoadRef.current && teamId) {
+      pendingLoadRef.current = false;
+      loadAll(true);
+    }
+  }, [teamId, loadAll]);
+
+  // Feature 5: sync free transfers from the live API on every squad load.
+  // The synced value pre-populates max_transfers unless the user has manually
+  // overridden it via the Settings slider during this session.
+  const transferOverrideRef = useRef(false);
+  const lastSyncedGwRef = useRef(null);
+  useEffect(() => {
+    const ft = data.squad?.free_transfers;
+    const gw = data.squad?.current_gw;
+    if (typeof ft !== 'number') return;
+    // Re-sync (overriding any manual change) when the gameweek rolls over.
+    if (gw !== lastSyncedGwRef.current) {
+      transferOverrideRef.current = false;
+      lastSyncedGwRef.current = gw;
+    }
+    if (transferOverrideRef.current) return;
+    const clamped = Math.max(0, Math.min(5, ft));
+    setSettings(prev => prev.max_transfers === clamped ? prev : { ...prev, max_transfers: clamped });
+  }, [data.squad]);
 
   const renderTab = () => {
     switch (activeTab) {
       case 'Squad':
-        return <SquadTab data={data.squad} loading={loading} onPlayerClick={openPlayerDetail} />;
+        return <SquadTab data={data.squad} recommendations={data.recommendations} loading={loading} onPlayerClick={openPlayerDetail} />;
       case 'Transfer Recs':
         return <RecommendationsTab data={data.recommendations} loading={loading} onPlayerClick={openPlayerDetail} />;
       case 'Captain':
@@ -105,6 +159,8 @@ function App() {
         return <LeaguesTab data={data.leagues} loading={loading} teamId={teamId} fetchData={fetchData} onPlayerClick={openPlayerDetail} />;
       case 'Chips':
         return <ChipsTab data={data.chips} loading={loading} />;
+      case 'Planning':
+        return <PlanningTab teamId={teamId} currentGw={data.squad?.current_gw} />;
       case 'Settings':
         return <SettingsTab settings={settings} onChange={handleSettingsChange} />;
       default:
@@ -121,13 +177,29 @@ function App() {
             <span className="title-icon">&#9917;</span> FPL Guidance Tool
           </h1>
           <form onSubmit={handleSubmit} className="header-form">
-            <input
-              type="number"
+            <ManagerIdInput
               value={teamId}
-              onChange={(e) => setTeamId(e.target.value)}
-              placeholder="Team ID"
-              className="team-input"
+              onChange={setTeamId}
+              onSubmit={() => loadAll(true)}
+              loading={loading}
             />
+            <button
+              type="button"
+              className="refresh-btn"
+              disabled={loading}
+              onClick={() => {
+                if (teamId === MY_TEAM_ID) {
+                  loadAll(true);
+                } else {
+                  pendingLoadRef.current = true;
+                  setTeamId(MY_TEAM_ID);
+                }
+              }}
+              title={`Load my team (${MY_TEAM_ID})`}
+              style={{background: 'var(--gold, #c8a96e)', color: '#1a1a1a'}}
+            >
+              My Team
+            </button>
             <button type="submit" className="refresh-btn" disabled={loading}>
               {loading ? 'Loading...' : 'Load Data'}
             </button>

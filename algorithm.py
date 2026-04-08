@@ -336,12 +336,8 @@ def get_transfer_recommendations(data, exclude_player_ids=None, max_transfers=2,
     user_info = data.get("user_info", {})
     bank = user_info.get("last_deadline_bank", 0) / 10  # Convert to millions
 
-    # Free transfers: use entry_history if available, default to 2
-    squad_data = data.get("squad", {})
-    entry_history = squad_data.get("entry_history", {})
-    free_transfers = entry_history.get("event_transfers", None)
-    if free_transfers is None or free_transfers < 1:
-        free_transfers = 2
+    # Free transfers: derive from the live picks API (transfers.limit - transfers.made)
+    free_transfers = _derive_free_transfers(data)
 
     # Squad player IDs (to exclude from replacement search)
     squad_ids = set(p["player_id"] for p in squad_players)
@@ -701,12 +697,48 @@ def get_squad_display(data):
         "squad": squad_players,
         "squad_by_position": grouped,
         "bank": user_info.get("last_deadline_bank", 0) / 10,
-        "free_transfers": 2,  # Simplified default
+        "free_transfers": _derive_free_transfers(data),
         "points": user_info.get("summary_overall_points", 0),
         "rank": user_info.get("summary_overall_rank", 0),
         "current_gw": data.get("current_gw", 1),
         "lookahead_gw": 5,
+        "team_name": user_info.get("name") or "",
+        "manager_name": (
+            (user_info.get("player_first_name") or "") + " " + (user_info.get("player_last_name") or "")
+        ).strip(),
     }
+
+
+def _derive_free_transfers(data):
+    """
+    Derive the number of free transfers currently available from the live API.
+
+    2025/26: the entry/{id}/event/{gw}/picks/ endpoint exposes a `transfers`
+    object containing `limit` (the FT cap including rollovers, max 5) and
+    `made` (transfers used this GW). Free transfers available = limit - made,
+    clamped to [0, 5]. Falls back gracefully to entry_history.event_transfers
+    if the new shape isn't present (e.g. older cached responses).
+    """
+    squad_data = data.get("squad", {}) or {}
+    transfers_obj = squad_data.get("transfers")
+    if isinstance(transfers_obj, dict):
+        limit = transfers_obj.get("limit")
+        made = transfers_obj.get("made")
+        if isinstance(limit, int) and isinstance(made, int):
+            return max(0, min(5, limit - made))
+        if isinstance(limit, int):
+            return max(0, min(5, limit))
+
+    # Fallback: entry_history.event_transfers is # transfers MADE this GW.
+    # Without a published cap we can only guess; carry-over rules give a
+    # default of 1 plus any unused rollover, so default to 1 if nothing better.
+    entry_history = squad_data.get("entry_history", {}) or {}
+    made = entry_history.get("event_transfers")
+    if isinstance(made, int):
+        # Most managers see at least 1 FT each week; assume cap of 1+made
+        # only as a last-ditch fallback.
+        return max(0, min(5, 1))
+    return 1
 
 
 def get_leagues_display(data):
@@ -844,10 +876,11 @@ def get_chip_recommendations(data):
     fixtures_by_gw = tables["fixtures_by_gw"]
     current_gw = tables["current_gw"]
 
-    # Determine which chips are used
+    # 2025/26 rule: each manager has TWO sets of four chips, one per half-season.
+    # First half = GW1-19, second half = GW20-38. First-half chips expire after the
+    # GW19 deadline if unused. The "Assistant Manager" chip was scrapped for 2025/26.
     history = data.get("history", {})
-    used_chips = history.get("chips", [])
-    used_chip_names = set(c.get("name", "").lower() for c in used_chips)
+    used_chips_raw = history.get("chips", [])
 
     ALL_CHIPS = ["wildcard", "freehit", "bboost", "3xc"]
     CHIP_LABELS = {
@@ -856,17 +889,59 @@ def get_chip_recommendations(data):
         "bboost": "Bench Boost",
         "3xc": "Triple Captain",
     }
+    HALF_SPLIT_GW = 19  # GW1-19 = first half, GW20-38 = second half
 
-    # Check availability (wildcard can be used twice: before and after GW19)
+    # Tag every used chip with its half ("first" if event <= 19, else "second"),
+    # and ignore any legacy/unknown chip names (e.g. scrapped "manager" chip).
+    used_chips = []
+    for c in used_chips_raw:
+        name = (c.get("name") or "").lower()
+        if name not in ALL_CHIPS:
+            continue
+        gw = c.get("event") or 0
+        half = "first" if gw <= HALF_SPLIT_GW else "second"
+        used_chips.append({"chip": name, "gw": gw, "half": half})
+
+    used_first = {c["chip"] for c in used_chips if c["half"] == "first"}
+    used_second = {c["chip"] for c in used_chips if c["half"] == "second"}
+
+    # First-half chips are expired (unavailable) once we're past GW19.
+    first_half_expired = current_gw > HALF_SPLIT_GW
+
+    def _chip_state(chip, half):
+        used_set = used_first if half == "first" else used_second
+        if chip in used_set:
+            used_record = next(
+                (c for c in used_chips if c["chip"] == chip and c["half"] == half),
+                None,
+            )
+            return {"state": "used", "gw": used_record["gw"] if used_record else None}
+        if half == "first" and first_half_expired:
+            return {"state": "expired", "gw": None}
+        return {"state": "available", "gw": None}
+
+    chip_sets = {
+        "first": [
+            {"chip": chip, "label": CHIP_LABELS[chip], **_chip_state(chip, "first")}
+            for chip in ALL_CHIPS
+        ],
+        "second": [
+            {"chip": chip, "label": CHIP_LABELS[chip], **_chip_state(chip, "second")}
+            for chip in ALL_CHIPS
+        ],
+    }
+
+    # Currently-recommendable chips: anything still "available" in either half.
+    # First-half chips after the deadline are expired and excluded automatically.
     available = []
-    for chip in ALL_CHIPS:
-        if chip == "wildcard":
-            # Count wildcard uses
-            wc_uses = sum(1 for c in used_chips if c.get("name", "").lower() == "wildcard")
-            if wc_uses < 2:
-                available.append(chip)
-        elif chip not in used_chip_names:
-            available.append(chip)
+    for half in ("first", "second"):
+        for entry in chip_sets[half]:
+            if entry["state"] == "available" and entry["chip"] not in available:
+                # Only recommend chips whose half is still in play
+                if half == "second" and current_gw < HALF_SPLIT_GW:
+                    # Don't push second-half chip recs while still in first half
+                    continue
+                available.append(entry["chip"])
 
     # Get squad picks
     squad = data.get("squad", {})
@@ -992,7 +1067,10 @@ def get_chip_recommendations(data):
 
     return {
         "available_chips": [{"chip": c, "label": CHIP_LABELS[c]} for c in available],
-        "used_chips": [{"chip": c.get("name", ""), "gw": c.get("event")} for c in used_chips],
+        "used_chips": [{"chip": c["chip"], "gw": c["gw"], "half": c["half"]} for c in used_chips],
+        "chip_sets": chip_sets,
+        "current_gw": current_gw,
+        "half_split_gw": HALF_SPLIT_GW,
         "recommendations": recommendations,
     }
 
