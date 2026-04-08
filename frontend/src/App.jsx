@@ -7,6 +7,9 @@ const API_BASE = '/api';
 
 const TABS = ['Squad', 'Transfer Recs', 'Captain', 'Rotation', 'Leagues', 'Chips', 'Planning', 'Settings'];
 
+// Owner's FPL manager ID — one-click shortcut in the header.
+const MY_TEAM_ID = '4067235';
+
 function App() {
   const [activeTab, setActiveTab] = useState('Squad');
   // Persist manager ID across sessions (Feature 2): seed from the most-recent
@@ -111,6 +114,18 @@ function App() {
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
 
+  // Auto-load after a programmatic teamId change (e.g. "My Team" shortcut).
+  // We can't call loadAll() synchronously right after setTeamId() because
+  // fetchData closes over the current teamId — we need to wait for the
+  // re-render, then trigger the load via this effect.
+  const pendingLoadRef = useRef(false);
+  useEffect(() => {
+    if (pendingLoadRef.current && teamId) {
+      pendingLoadRef.current = false;
+      loadAll(true);
+    }
+  }, [teamId, loadAll]);
+
   // Feature 5: sync free transfers from the live API on every squad load.
   // The synced value pre-populates max_transfers unless the user has manually
   // overridden it via the Settings slider during this session.
@@ -168,6 +183,23 @@ function App() {
               onSubmit={() => loadAll(true)}
               loading={loading}
             />
+            <button
+              type="button"
+              className="refresh-btn"
+              disabled={loading}
+              onClick={() => {
+                if (teamId === MY_TEAM_ID) {
+                  loadAll(true);
+                } else {
+                  pendingLoadRef.current = true;
+                  setTeamId(MY_TEAM_ID);
+                }
+              }}
+              title={`Load my team (${MY_TEAM_ID})`}
+              style={{background: 'var(--gold, #c8a96e)', color: '#1a1a1a'}}
+            >
+              My Team
+            </button>
             <button type="submit" className="refresh-btn" disabled={loading}>
               {loading ? 'Loading...' : 'Load Data'}
             </button>
